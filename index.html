@@ -91,7 +91,8 @@ input[type=text]::placeholder { color: var(--faint); }
   margin-bottom: 8px;
 }
 .topic-item:hover { border-color: var(--border2); }
-.topic-item.done { background: rgba(20,168,112,0.07); border-color: rgba(20,168,112,0.35); }
+.topic-item.done { background: rgba(20,168,112,0.09); border-color: rgba(20,168,112,0.38); }
+.topic-item.in-progress { background: rgba(200,158,0,0.07); border-color: rgba(200,158,0,0.35); }
 .topic-num { font-family: var(--serif); font-size: 20px; color: var(--gold); font-weight: 700; min-width: 28px; }
 .topic-body { flex: 1; min-width: 0; }
 .topic-name { font-size: 14px; font-weight: 600; margin-bottom: 3px; line-height: 1.3; }
@@ -212,7 +213,34 @@ function loadStore() {
   try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; }
 }
 function saveStore() {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch {}
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch(e) { console.warn('Save failed', e); }
+}
+
+function exportProgress() {
+  const data = JSON.stringify(store, null, 2);
+  const blob = new Blob([data], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `tcprep-${store.activeUser || 'progress'}-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importProgress(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const imp = JSON.parse(e.target.result);
+      if (imp.users) {
+        store.users = { ...(store.users || {}), ...imp.users };
+        if (!store.activeUser && imp.activeUser) store.activeUser = imp.activeUser;
+        saveStore();
+        render();
+      } else { alert('Unrecognised progress file.'); }
+    } catch { alert('Could not read file.'); }
+  };
+  reader.readAsText(file);
 }
 
 let store = loadStore();
@@ -377,16 +405,25 @@ function renderHome() {
   const user = currentUser();
   const w = div(null);
 
+  // Hidden file input for import
+  const fileInput = el('input', { type: 'file', accept: '.json', style: 'display:none' });
+  fileInput.addEventListener('change', e => { if (e.target.files[0]) importProgress(e.target.files[0]); });
+  w.appendChild(fileInput);
+
   // User bar
   w.appendChild(div('user-bar',
     div(null,
       el('div', { cls: 'label' }, 'Studying as'),
       el('div', { cls: 'user-name-display' }, store.activeUser)
     ),
-    el('button', {
-      cls: 'switch-user-btn',
-      onClick: () => { store.activeUser = null; saveStore(); go('welcome'); }
-    }, 'Switch user')
+    el('div', { style: 'display:flex;gap:6px;align-items:center;' },
+      el('button', { cls: 'switch-user-btn', onClick: exportProgress }, '↓ Export'),
+      el('button', { cls: 'switch-user-btn', onClick: () => fileInput.click() }, '↑ Import'),
+      el('button', {
+        cls: 'switch-user-btn',
+        onClick: () => { store.activeUser = null; saveStore(); go('welcome'); }
+      }, 'Switch user')
+    )
   ));
 
   // Tabs
@@ -430,9 +467,10 @@ function renderKnowledgeHome(user) {
     const wrong = (stats.wrongIds || []).length;
     const hasScore = stats.lastTotal > 0;
     const allRight = hasScore && stats.lastScore === topic.questions.length && wrong === 0;
+    const inProgress = hasScore && !allRight;
 
     w.appendChild(el('button', {
-      cls: 'topic-item' + (allRight ? ' done' : ''),
+      cls: 'topic-item' + (allRight ? ' done' : inProgress ? ' in-progress' : ''),
       onClick: () => startQuiz({ mode: 'knowledge', source: 'topic', topicIdx: idx })
     },
       el('div', { cls: 'topic-num' }, String(idx + 1).padStart(2, '0')),
