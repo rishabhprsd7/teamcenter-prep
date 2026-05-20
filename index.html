@@ -8,26 +8,27 @@
 <meta name="theme-color" content="#0f1117">
 <title>Teamcenter Prep</title>
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 :root {
-  --bg: #0f1117;
-  --bg1: #171b26;
-  --bg2: #1e2336;
-  --border: #272f42;
-  --border2: #313d58;
-  --text: #e8ecf4;
-  --dim: #8892a8;
-  --faint: #4a5368;
-  --gold: #e8b86d;
-  --gold-bg: rgba(232,184,109,0.12);
-  --green: #5fcea8;
-  --green-bg: rgba(95,206,168,0.12);
-  --red: #e86d6d;
-  --red-bg: rgba(232,109,109,0.12);
-  --yellow: #e8c96d;
-  --r: 14px;
-  --rs: 10px;
-  --serif: 'Georgia', 'Iowan Old Style', serif;
-  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --bg: #eef1f6;
+  --bg1: #ffffff;
+  --bg2: #e4e9f2;
+  --border: #cdd5e4;
+  --border2: #b0bdd0;
+  --text: #1a2638;
+  --dim: #546070;
+  --faint: #8898aa;
+  --gold: #0d8fa8;
+  --gold-bg: rgba(13,143,168,0.10);
+  --green: #14a870;
+  --green-bg: rgba(20,168,112,0.12);
+  --red: #d94040;
+  --red-bg: rgba(217,64,64,0.10);
+  --yellow: #b8860a;
+  --r: 10px;
+  --rs: 7px;
+  --serif: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --mono: 'SF Mono', 'Consolas', 'Menlo', monospace;
 }
 *, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; margin: 0; padding: 0; }
@@ -58,7 +59,7 @@ button { font-family: var(--sans); cursor: pointer; border: none; transition: op
 button:active { transform: scale(0.98); opacity: 0.85; }
 button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
 .btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 15px 18px; border-radius: var(--r); font-size: 15px; font-weight: 600; }
-.btn-primary { background: var(--gold); color: #1a1200; }
+.btn-primary { background: var(--gold); color: #ffffff; }
 .btn-secondary { background: var(--bg2); color: var(--text); border: 1px solid var(--border2); }
 .btn-ghost { background: transparent; color: var(--gold); font-size: 14px; font-weight: 600; padding: 8px 0; width: auto; }
 .btn-sm { padding: 10px 14px; font-size: 13px; border-radius: var(--rs); }
@@ -76,7 +77,7 @@ input[type=text]::placeholder { color: var(--faint); }
 /* ── PILL TABS ── */
 .tabs { display: flex; background: var(--bg1); border: 1px solid var(--border); border-radius: var(--r); padding: 4px; gap: 4px; }
 .tab { flex: 1; padding: 11px 10px; border-radius: var(--rs); font-size: 14px; font-weight: 600; color: var(--dim); background: transparent; }
-.tab.active { background: var(--gold); color: #1a1200; }
+.tab.active { background: var(--gold); color: #ffffff; }
 
 /* ── SECTION LABEL ── */
 .section-label { margin: 24px 0 10px; }
@@ -135,11 +136,11 @@ input[type=text]::placeholder { color: var(--faint); }
   font-family: var(--mono); font-size: 10px; font-weight: 700; color: var(--dim); margin-top: 1px;
 }
 .opt.sel { border-color: var(--gold); background: var(--gold-bg); }
-.opt.sel .opt-letter { background: var(--gold); border-color: var(--gold); color: #1a1200; }
+.opt.sel .opt-letter { background: var(--gold); border-color: var(--gold); color: #ffffff; }
 .opt.correct { border-color: var(--green); background: var(--green-bg); }
-.opt.correct .opt-letter { background: var(--green); border-color: var(--green); color: #001a10; }
+.opt.correct .opt-letter { background: var(--green); border-color: var(--green); color: #ffffff; }
 .opt.wrong { border-color: var(--red); background: var(--red-bg); }
-.opt.wrong .opt-letter { background: var(--red); border-color: var(--red); color: #1a0000; }
+.opt.wrong .opt-letter { background: var(--red); border-color: var(--red); color: #ffffff; }
 .opt.locked { cursor: default; }
 .opt.faded { opacity: 0.45; cursor: default; }
 
