@@ -91,6 +91,7 @@ input[type=text]::placeholder { color: var(--faint); }
   margin-bottom: 8px;
 }
 .topic-item:hover { border-color: var(--border2); }
+.topic-item.done { background: rgba(20,168,112,0.07); border-color: rgba(20,168,112,0.35); }
 .topic-num { font-family: var(--serif); font-size: 20px; color: var(--gold); font-weight: 700; min-width: 28px; }
 .topic-body { flex: 1; min-width: 0; }
 .topic-name { font-size: 14px; font-weight: 600; margin-bottom: 3px; line-height: 1.3; }
@@ -428,9 +429,10 @@ function renderKnowledgeHome(user) {
     const stats = (user.topicStats || {})[topic.name] || {};
     const wrong = (stats.wrongIds || []).length;
     const hasScore = stats.lastTotal > 0;
+    const allRight = hasScore && stats.lastScore === topic.questions.length && wrong === 0;
 
     w.appendChild(el('button', {
-      cls: 'topic-item',
+      cls: 'topic-item' + (allRight ? ' done' : ''),
       onClick: () => startQuiz({ mode: 'knowledge', source: 'topic', topicIdx: idx })
     },
       el('div', { cls: 'topic-num' }, String(idx + 1).padStart(2, '0')),
