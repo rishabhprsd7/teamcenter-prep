@@ -263,8 +263,19 @@ function saveStore() {
   if (store.activeUser) pushToCloud(store.activeUser);
 }
 
-// Merge two user data objects — combine progress per topic
-// correctIds union; wrongIds union minus anything in correctIds (correct wins on conflict).
+// Merge two user data objects — combine progress per topic.
+//
+// Conflict resolution is **timestamp-based** at the topic level: whichever side
+// has a more recent `updatedAt` is the authoritative version for that topic.
+// This is the only correct strategy because the local user's per-question state
+// (correctIds vs wrongIds) is already maintained accurately by recordQuestionResult.
+// Any content-only merge (correct-wins / wrong-wins) inevitably destroys data —
+// "correct wins" silently reverts new wrong answers from stale cloud data;
+// "wrong wins" silently reverts corrections.  Timestamps avoid both.
+//
+// Legacy fallback: when neither side has an `updatedAt` (data from before this
+// fix), fall back to a union with correct-wins — a one-time gentle migration
+// that also self-heals any stuck-wrong from the previous broken push.
 function mergeUserData(local, cloud) {
   if (!local && !cloud) return { topicStats: {}, wrongIds: [] };
   if (!local) return cloud;
@@ -279,25 +290,32 @@ function mergeUserData(local, cloud) {
   allTopics.forEach(t => {
     const l = (local.topicStats || {})[t] || {};
     const c = (cloud.topicStats || {})[t] || {};
-    // "Wrong wins" conflict resolution: if a question is wrong on either side it stays
-    // wrong, even if it was previously correct on the other side.  This prevents a stale
-    // cloud "correct" from silently overwriting a question the user just answered wrong.
-    // Cross-device sync is safe because pullFromCloud runs on page-load and updates local
-    // before any push occurs, so a fresh "correct" on another device is already reflected
-    // in local.correctIds by the time the next pushToCloud transaction runs.
-    const allWrong   = new Set([...(l.wrongIds   || []), ...(c.wrongIds   || [])]);
-    const allCorrect = new Set([...(l.correctIds || []), ...(c.correctIds || [])]);
-    const wrongIds   = [...allWrong];
-    const correctIds = [...allCorrect].filter(id => !allWrong.has(id));
+    const lTime = l.updatedAt || 0;
+    const cTime = c.updatedAt || 0;
     const topic = TOPIC_BY_NAME[t];
+
+    let chosen;
+    if (lTime === 0 && cTime === 0) {
+      // Legacy data on both sides — fall back to union with correct-wins.
+      const correctIds = [...new Set([...(l.correctIds || []), ...(c.correctIds || [])])];
+      const correctSet = new Set(correctIds);
+      const wrongIds   = [...new Set([...(l.wrongIds || []), ...(c.wrongIds || [])])].filter(id => !correctSet.has(id));
+      chosen = { ...l, correctIds, wrongIds };
+    } else if (lTime >= cTime) {
+      chosen = l;
+    } else {
+      chosen = c;
+    }
+
     merged.topicStats[t] = {
-      correctIds, wrongIds,
-      lastScore: correctIds.length,
-      lastTotal: topic ? topic.questions.length : (l.lastTotal || c.lastTotal || 0),
-      // session/resume state: prefer the one that has it (whichever was saved last)
-      ...(l.sessionAnswers  || c.sessionAnswers  ? { sessionAnswers:  l.sessionAnswers  || c.sessionAnswers  } : {}),
-      ...(l.sessionRevealed || c.sessionRevealed ? { sessionRevealed: l.sessionRevealed || c.sessionRevealed } : {}),
-      ...(l.resumeIndex != null || c.resumeIndex != null ? { resumeIndex: l.resumeIndex != null ? l.resumeIndex : c.resumeIndex } : {})
+      correctIds: chosen.correctIds || [],
+      wrongIds:   chosen.wrongIds   || [],
+      lastScore:  (chosen.correctIds || []).length,
+      lastTotal:  topic ? topic.questions.length : (chosen.lastTotal || 0),
+      updatedAt:  Math.max(lTime, cTime),
+      ...(chosen.sessionAnswers  ? { sessionAnswers:  chosen.sessionAnswers  } : {}),
+      ...(chosen.sessionRevealed ? { sessionRevealed: chosen.sessionRevealed } : {}),
+      ...(chosen.resumeIndex != null ? { resumeIndex: chosen.resumeIndex } : {})
     };
   });
 
@@ -482,6 +500,8 @@ function recordQuestionResult(user, q, isCorrect) {
     ts.lastScore = ts.correctIds.length;
     ts.lastTotal = topic.questions.length;
   }
+  // Stamp the topic so the sync merge knows this side is the freshest version.
+  ts.updatedAt = Date.now();
 }
 
 // On page load: pull from cloud, merge with local, push merged result back
@@ -1119,6 +1139,7 @@ function savePartialQuizProgress() {
   });
   stats.sessionAnswers  = sessionAnswers;
   stats.sessionRevealed = sessionRevealed;
+  stats.updatedAt       = Date.now();
   // correctIds/wrongIds were already updated per-question by submitAnswer
 
   if (!route.shuffle) {
@@ -1184,6 +1205,7 @@ function finishQuiz() {
       delete stats.resumeIndex;
       delete stats.sessionAnswers;
       delete stats.sessionRevealed;
+      stats.updatedAt = Date.now();
     }
   }
   saveStore();
