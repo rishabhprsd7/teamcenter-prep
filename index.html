@@ -412,22 +412,21 @@ const TOPICS = (() => {
 // Lookup: topicName → topic object (for finding by q.t)
 const TOPIC_BY_NAME = Object.fromEntries(TOPICS.map(t => [t.name, t]));
 
-// One-time migration per user: back-fill correctIds from lastScore/wrongIds for old data.
-// If a topic was fully attempted (lastScore + wrongIds.length === lastTotal === topic size),
-// we can derive correctIds = all topic questions not in wrongIds.
+// Back-fill correctIds from lastScore/wrongIds for old data so existing progress
+// remains visible after upgrade. If we know exactly which questions were right
+// (full attempt), use those. Otherwise pick arbitrary non-wrong IDs to preserve
+// the user's visible score — they'll be re-evaluated naturally if the user
+// re-attempts those questions.
 function migrateTopicStats(user) {
   if (!user || !user.topicStats) return;
   TOPICS.forEach(topic => {
     const stats = user.topicStats[topic.name];
     if (!stats || stats.correctIds) return;
     const wrongSet = new Set(stats.wrongIds || []);
-    if (stats.lastScore != null && stats.lastTotal === topic.questions.length
-        && (stats.lastScore + wrongSet.size) === stats.lastTotal) {
-      // Fully attempted: anything not wrong was correct
-      stats.correctIds = topic.questions.filter(q => !wrongSet.has(q.i)).map(q => q.i);
-    } else {
-      stats.correctIds = []; // unknown which were correct — leave empty
-    }
+    const available = topic.questions.filter(q => !wrongSet.has(q.i)).map(q => q.i);
+    const score = stats.lastScore || 0;
+    // Slice up to `score` IDs from non-wrong questions
+    stats.correctIds = available.slice(0, Math.min(score, available.length));
   });
 }
 
