@@ -646,6 +646,7 @@ function renderQuiz() {
       if (quiz.mode === 'assessment' && quiz.index > 0) {
         if (!confirm('Exit? Progress will be lost.')) return;
       }
+      savePartialQuizProgress();
       quiz = null; go('home');
     }}, '‹ Back'),
     el('h2', { cls: 'quiz-title-text' }, quiz.title)
@@ -739,6 +740,23 @@ function handleOption(q, oi) {
     ? (cur.includes(oi) ? cur.filter(x => x !== oi) : [...cur, oi])
     : [oi];
   go('quiz');
+}
+
+function savePartialQuizProgress() {
+  if (!quiz || quiz.source !== 'topic' || quiz.topicIdx == null) return;
+  const answered = Object.keys(quiz.revealed).length;
+  if (answered === 0) return; // nothing answered yet — don't mark topic
+  const user = currentUser();
+  const tname = TOPICS[quiz.topicIdx].name;
+  user.topicStats = user.topicStats || {};
+  user.topicStats[tname] = user.topicStats[tname] || {};
+  // Only update score if we answered more questions than a previous partial save
+  const prev = user.topicStats[tname].lastTotal || 0;
+  if (answered >= prev) {
+    user.topicStats[tname].lastScore = quiz.correctCount;
+    user.topicStats[tname].lastTotal = quiz.pool.length; // keep total as full set so % is honest
+  }
+  saveStore();
 }
 
 function submitAnswer(q) {
