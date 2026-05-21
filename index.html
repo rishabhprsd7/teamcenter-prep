@@ -538,7 +538,13 @@ function renderWelcome() {
   const w = div('auth-wrap');
   w.appendChild(div(null,
     el('div', { cls: 'auth-logo' }, 'Teamcenter ', el('span', { cls: 'gold italic' }, 'Prep')),
-    el('p', { cls: 'auth-sub' }, '334 questions across 60 topics. Enter your name + a 4-digit PIN — your PIN keeps your progress private.')
+    el('p', { cls: 'auth-sub' }, '334 questions across 60 topics. Enter your name + a 4-digit PIN — your PIN keeps your progress private.'),
+    el('div', { style: 'margin-top:16px;padding:12px 14px;background:var(--gold-bg);border:1px solid var(--gold);border-radius:var(--rs);font-size:13px;color:var(--text);line-height:1.6;' },
+      el('strong', null, '💡 Before you begin — '), 'Make sure you\'ve watched all the training videos in the Teamcenter Associate certification path first. This app is designed for practice and revision, not as a substitute for the official learning material.'
+    ),
+    el('div', { style: 'margin-top:10px;padding:12px 14px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--rs);font-size:13px;color:var(--dim);line-height:1.6;' },
+      el('strong', { style: 'color:var(--text)' }, '⚠️ Disclaimer — '), 'All questions in this app are sourced from the knowledge checks in the Teamcenter Associate certification path. These are for practice purposes only — going through these is a great way to solidify your understanding of the topics and may or may not appear in the real exam.'
+    )
   ));
 
   const existingUsers = Object.keys(store.users || {});
@@ -689,6 +695,9 @@ function renderAssessmentHome(user) {
   const w = div(null);
   const wrongCount = (user.wrongIds || []).length;
 
+  w.appendChild(el('div', { style: 'margin-bottom:16px;padding:12px 14px;background:var(--gold-bg);border:1px solid var(--gold);border-radius:var(--rs);font-size:13px;color:var(--text);line-height:1.6;' },
+    el('strong', null, '🎯 Heads up — '), 'The real Teamcenter Associate exam is AI proctored. Use these mock exams to simulate real exam conditions — no notes, no browser tabs, no help from others. The more honestly you practice, the better prepared you\'ll be on exam day.'
+  ));
   w.appendChild(el('div', { cls: 'label section-label' }, 'Mock Exams'));
   w.appendChild(el('p', { style: 'font-size:13px;color:var(--dim);margin-bottom:12px;' }, '125 questions · 2 hour timer · Fixed sets that mirror the real exam.'));
 
