@@ -317,6 +317,12 @@ let store = loadStore();
   if (changed) try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch {}
 })();
 
+// On page load: if already logged in, push any local progress to cloud immediately
+// (covers the case where data was saved locally before Firestore rules were open)
+if (store.activeUser) {
+  pushToCloud(store.activeUser);
+}
+
 function getUser(name) {
   if (!store.users) store.users = {};
   if (!store.users[name]) store.users[name] = { topicStats: {}, wrongIds: [] };
