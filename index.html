@@ -801,25 +801,10 @@ function renderAssessmentHome(user) {
   const w = div(null);
   const wrongCount = (user.wrongIds || []).length;
 
-  w.appendChild(el('div', { style: 'margin-bottom:16px;padding:12px 14px;background:var(--gold-bg);border:1px solid var(--gold);border-radius:var(--rs);font-size:13px;color:var(--text);line-height:1.6;' },
-    el('strong', null, '🎯 Heads up — '), 'The real Teamcenter Associate exam is AI proctored. Use these mock exams to simulate real exam conditions — no notes, no browser tabs, no help from others. The more honestly you practice, the better prepared you\'ll be on exam day.'
-  ));
-  w.appendChild(el('div', { cls: 'label section-label' }, 'Mock Exams'));
-  w.appendChild(el('p', { style: 'font-size:13px;color:var(--dim);margin-bottom:12px;' }, '125 questions · 2 hour timer · Fixed sets that mirror the real exam.'));
-
-  [1,2,3,4,5].forEach(n => {
-    w.appendChild(el('button', {
-      cls: 'assess-card' + (n === 1 ? ' featured' : ''),
-      onClick: () => startQuiz({ mode: 'assessment', source: 'mock', mockSet: n })
-    },
-      el('div', { cls: 'assess-title' }, `Mock Exam ${n}`),
-      el('div', { cls: 'assess-sub' }, `Set ${n} · 125 questions · 2 hrs`)
-    ));
-  });
-
-  w.appendChild(el('div', { cls: 'label section-label', style: 'margin-top:24px' }, 'Full Assessment'));
+  // Assessments first
+  w.appendChild(el('div', { cls: 'label section-label' }, 'Assessments'));
   w.appendChild(el('button', {
-    cls: 'assess-card',
+    cls: 'assess-card featured',
     onClick: () => startQuiz({ mode: 'assessment', source: 'full' })
   },
     el('div', { cls: 'assess-title' }, 'Full Assessment — all topics'),
@@ -848,6 +833,23 @@ function renderAssessmentHome(user) {
       el('div', { cls: 'assess-sub' }, `${wrongCount} questions you've gotten wrong before.`)
     ));
   }
+
+  // Mock Exams at the bottom
+  w.appendChild(el('div', { style: 'margin-top:24px;margin-bottom:16px;padding:12px 14px;background:var(--gold-bg);border:1px solid var(--gold);border-radius:var(--rs);font-size:13px;color:var(--text);line-height:1.6;' },
+    el('strong', null, '🎯 Heads up — '), 'The real Teamcenter Associate exam is AI proctored. Use these mock exams to simulate real exam conditions — no notes, no browser tabs, no help from others. The more honestly you practice, the better prepared you\'ll be on exam day.'
+  ));
+  w.appendChild(el('div', { cls: 'label section-label' }, 'Mock Exams'));
+  w.appendChild(el('p', { style: 'font-size:13px;color:var(--dim);margin-bottom:12px;' }, '125 questions · 2 hour timer · Fixed sets that mirror the real exam.'));
+
+  [1,2,3,4,5].forEach(n => {
+    w.appendChild(el('button', {
+      cls: 'assess-card',
+      onClick: () => startQuiz({ mode: 'assessment', source: 'mock', mockSet: n })
+    },
+      el('div', { cls: 'assess-title' }, `Mock Exam ${n}`),
+      el('div', { cls: 'assess-sub' }, `Set ${n} · 125 questions · 2 hrs`)
+    ));
+  });
 
   w.appendChild(el('div', { cls: 'label section-label', style: 'margin-top:28px' }, 'How assessment mode works'));
   w.appendChild(div('card',
