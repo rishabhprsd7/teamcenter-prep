@@ -386,21 +386,7 @@ let store = loadStore();
   if (changed) try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch {}
 })();
 
-// On page load: pull from cloud, merge with local, push merged result back
-// This ensures the best progress from any device always wins
-if (store.activeUser) {
-  // Migrate local user data first so the merge compares apples to apples
-  if (store.users && store.users[store.activeUser]) {
-    migrateTopicStats(store.users[store.activeUser]);
-  }
-  pullFromCloud(store.activeUser).then(() => {
-    if (store.users && store.users[store.activeUser]) {
-      migrateTopicStats(store.users[store.activeUser]);
-    }
-    pushToCloud(store.activeUser);
-    render();
-  });
-}
+// Page-load sync runs later — moved below TOPICS/migrateTopicStats definitions.
 
 function getUser(name) {
   if (!store.users) store.users = {};
@@ -464,6 +450,21 @@ function recordQuestionResult(user, q, isCorrect) {
     ts.lastScore = ts.correctIds.length;
     ts.lastTotal = topic.questions.length;
   }
+}
+
+// On page load: pull from cloud, merge with local, push merged result back
+// (Placed here so TOPICS / migrateTopicStats are already initialised.)
+if (store.activeUser) {
+  if (store.users && store.users[store.activeUser]) {
+    migrateTopicStats(store.users[store.activeUser]);
+  }
+  pullFromCloud(store.activeUser).then(() => {
+    if (store.users && store.users[store.activeUser]) {
+      migrateTopicStats(store.users[store.activeUser]);
+    }
+    pushToCloud(store.activeUser);
+    if (typeof render === 'function') render();
+  });
 }
 
 /* ════════════════════════════════════════════════
