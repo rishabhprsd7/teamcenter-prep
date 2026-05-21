@@ -919,12 +919,9 @@ function savePartialQuizProgress() {
   const tname = TOPICS[quiz.topicIdx].name;
   user.topicStats = user.topicStats || {};
   user.topicStats[tname] = user.topicStats[tname] || {};
-  // Only update score if we answered more questions than a previous partial save
-  const prev = user.topicStats[tname].lastTotal || 0;
-  if (answered >= prev) {
-    user.topicStats[tname].lastScore = quiz.correctCount;
-    user.topicStats[tname].lastTotal = quiz.pool.length; // keep total as full set so % is honest
-  }
+  // Always save current progress — keeps yellow status accurate
+  user.topicStats[tname].lastScore = quiz.correctCount;
+  user.topicStats[tname].lastTotal = quiz.pool.length;
   saveStore();
 }
 
