@@ -103,6 +103,7 @@ input[type=text]::placeholder { color: var(--faint); }
 .topic-meta { font-family: var(--mono); font-size: 11px; color: var(--dim); }
 .topic-meta .ok { color: var(--green); }
 .topic-meta .bad { color: var(--red); }
+.topic-meta .faint { color: var(--faint); }
 .topic-arrow { color: var(--faint); font-size: 18px; }
 
 /* ── ASSESSMENT CARDS ── */
@@ -716,7 +717,8 @@ function renderKnowledgeHome(user) {
         el('div', { cls: 'topic-meta' },
           `${topic.questions.length} questions`,
           hasScore ? span('ok', `  ✓ ${stats.lastScore}/${stats.lastTotal}`) : null,
-          wrong > 0 ? span('bad', `  ✗ ${wrong} wrong`) : null
+          wrong > 0 ? span('bad', `  ✗ ${wrong} wrong`) : null,
+          (!route.shuffle && stats.resumeIndex > 0 && !allRight) ? span('faint', `  · resumes Q${stats.resumeIndex + 1}`) : null
         )
       ),
       el('div', { cls: 'topic-arrow' }, '›')
@@ -799,6 +801,10 @@ function startQuiz(opts) {
     const t = TOPICS[opts.topicIdx];
     pool = route.shuffle ? shuffle(t.questions.slice()) : t.questions.slice();
     title = t.name;
+    // Resume from where the user left off (only works in non-shuffled mode)
+    const stats = (user.topicStats || {})[t.name] || {};
+    opts._resumeIndex = (!route.shuffle && stats.resumeIndex > 0 && stats.resumeIndex < pool.length)
+      ? stats.resumeIndex : 0;
   } else if (opts.source === 'wrong') {
     const ids = new Set(user.wrongIds || []);
     pool = shuffle(QUESTIONS.filter(q => ids.has(q.i)));
@@ -822,7 +828,7 @@ function startQuiz(opts) {
   quiz = {
     mode: opts.mode, source: opts.source, topicIdx: opts.topicIdx,
     mockSet: opts.mockSet || null,
-    title, pool, index: 0,
+    title, pool, index: opts._resumeIndex || 0,
     answers: {}, revealed: {},
     streak: 0, correctCount: 0,
     timeLimit, startTime: timeLimit ? Date.now() : null,
@@ -956,6 +962,12 @@ function savePartialQuizProgress() {
   // Always save current progress — keeps yellow status accurate
   user.topicStats[tname].lastScore = quiz.correctCount;
   user.topicStats[tname].lastTotal = quiz.pool.length;
+  // Save resume point only when not shuffled (shuffled order can't be reproduced)
+  if (!route.shuffle) {
+    user.topicStats[tname].resumeIndex = Object.keys(quiz.revealed).length;
+  } else {
+    delete user.topicStats[tname].resumeIndex;
+  }
   saveStore();
 }
 
@@ -1012,6 +1024,7 @@ function finishQuiz() {
     user.topicStats[tname] = user.topicStats[tname] || {};
     user.topicStats[tname].lastScore = correct;
     user.topicStats[tname].lastTotal = quiz.pool.length;
+    delete user.topicStats[tname].resumeIndex; // topic finished — next open starts fresh
   }
   saveStore();
   quiz.results = { correct, total: quiz.pool.length, detail };
