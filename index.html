@@ -279,9 +279,16 @@ function mergeUserData(local, cloud) {
   allTopics.forEach(t => {
     const l = (local.topicStats || {})[t] || {};
     const c = (cloud.topicStats || {})[t] || {};
-    const correctIds = [...new Set([...(l.correctIds || []), ...(c.correctIds || [])])];
-    const correctSet = new Set(correctIds);
-    const wrongIds   = [...new Set([...(l.wrongIds || []), ...(c.wrongIds || [])])].filter(id => !correctSet.has(id));
+    // "Wrong wins" conflict resolution: if a question is wrong on either side it stays
+    // wrong, even if it was previously correct on the other side.  This prevents a stale
+    // cloud "correct" from silently overwriting a question the user just answered wrong.
+    // Cross-device sync is safe because pullFromCloud runs on page-load and updates local
+    // before any push occurs, so a fresh "correct" on another device is already reflected
+    // in local.correctIds by the time the next pushToCloud transaction runs.
+    const allWrong   = new Set([...(l.wrongIds   || []), ...(c.wrongIds   || [])]);
+    const allCorrect = new Set([...(l.correctIds || []), ...(c.correctIds || [])]);
+    const wrongIds   = [...allWrong];
+    const correctIds = [...allCorrect].filter(id => !allWrong.has(id));
     const topic = TOPIC_BY_NAME[t];
     merged.topicStats[t] = {
       correctIds, wrongIds,
