@@ -256,6 +256,38 @@ function saveStore() {
   if (store.activeUser) pushToCloud(store.activeUser);
 }
 
+// Merge two user data objects — always keep the better progress per topic
+function mergeUserData(local, cloud) {
+  if (!local && !cloud) return { topicStats: {}, wrongIds: [] };
+  if (!local) return cloud;
+  if (!cloud) return local;
+
+  const merged = { topicStats: {}, wrongIds: [] };
+
+  // Merge topicStats: per topic, keep whichever has the higher lastScore
+  const allTopics = new Set([
+    ...Object.keys(local.topicStats  || {}),
+    ...Object.keys(cloud.topicStats  || {})
+  ]);
+  allTopics.forEach(t => {
+    const l = (local.topicStats  || {})[t];
+    const c = (cloud.topicStats  || {})[t];
+    if (!l) { merged.topicStats[t] = c; return; }
+    if (!c) { merged.topicStats[t] = l; return; }
+    // Keep higher lastScore; on tie keep cloud (more likely to be newest device)
+    merged.topicStats[t] = (l.lastScore || 0) > (c.lastScore || 0) ? l : c;
+  });
+
+  // wrongIds: start from the union, but remove any id that scored correct in either copy
+  const localCorrect  = new Set();
+  const cloudCorrect  = new Set();
+  Object.values(local.topicStats || {}).forEach(ts => (ts.wrongIds || []).forEach(() => {}));
+  // Simple union — answers marked wrong on either device stay wrong
+  merged.wrongIds = [...new Set([...(local.wrongIds || []), ...(cloud.wrongIds || [])])];
+
+  return merged;
+}
+
 function pushToCloud(key) {
   const u = (store.users || {})[key];
   if (!u) return;
@@ -288,10 +320,9 @@ async function pullFromCloud(key) {
     }
     if (data) {
       if (!store.users) store.users = {};
-      store.users[key] = {
-        topicStats: data.topicStats || {},
-        wrongIds:   data.wrongIds   || []
-      };
+      const cloudData = { topicStats: data.topicStats || {}, wrongIds: data.wrongIds || [] };
+      const localData = store.users[key] || null;
+      store.users[key] = mergeUserData(localData, cloudData);
       try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch {}
       if (legacyKey) {
         db.collection('progress').doc(key).set({
@@ -339,10 +370,13 @@ let store = loadStore();
   if (changed) try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch {}
 })();
 
-// On page load: if already logged in, push any local progress to cloud immediately
-// (covers the case where data was saved locally before Firestore rules were open)
+// On page load: pull from cloud, merge with local, push merged result back
+// This ensures the best progress from any device always wins
 if (store.activeUser) {
-  pushToCloud(store.activeUser);
+  pullFromCloud(store.activeUser).then(() => {
+    pushToCloud(store.activeUser);
+    render(); // re-render with merged data
+  });
 }
 
 function getUser(name) {
