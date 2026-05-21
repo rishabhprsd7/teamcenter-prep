@@ -263,8 +263,8 @@ function saveStore() {
   if (store.activeUser) pushToCloud(store.activeUser);
 }
 
-// Merge two user data objects — keep the better progress per topic
-// Priority: a completed topic (lastScore === lastTotal) always beats partial
+// Merge two user data objects — combine progress per topic
+// correctIds union; wrongIds union minus anything in correctIds (correct wins on conflict).
 function mergeUserData(local, cloud) {
   if (!local && !cloud) return { topicStats: {}, wrongIds: [] };
   if (!local) return cloud;
@@ -272,27 +272,32 @@ function mergeUserData(local, cloud) {
 
   const merged = { topicStats: {}, wrongIds: [] };
 
-  // Merge topicStats per topic
   const allTopics = new Set([
     ...Object.keys(local.topicStats || {}),
     ...Object.keys(cloud.topicStats || {})
   ]);
   allTopics.forEach(t => {
-    const l = (local.topicStats || {})[t];
-    const c = (cloud.topicStats || {})[t];
-    if (!l) { merged.topicStats[t] = c; return; }
-    if (!c) { merged.topicStats[t] = l; return; }
-    const lDone = l.lastScore != null && l.lastTotal > 0 && l.lastScore === l.lastTotal;
-    const cDone = c.lastScore != null && c.lastTotal > 0 && c.lastScore === c.lastTotal;
-    // A completed copy always wins over a partial one
-    if (lDone && !cDone) { merged.topicStats[t] = l; return; }
-    if (cDone && !lDone) { merged.topicStats[t] = c; return; }
-    // Otherwise keep whichever has the higher lastScore
-    merged.topicStats[t] = (l.lastScore || 0) >= (c.lastScore || 0) ? l : c;
+    const l = (local.topicStats || {})[t] || {};
+    const c = (cloud.topicStats || {})[t] || {};
+    const correctIds = [...new Set([...(l.correctIds || []), ...(c.correctIds || [])])];
+    const correctSet = new Set(correctIds);
+    const wrongIds   = [...new Set([...(l.wrongIds || []), ...(c.wrongIds || [])])].filter(id => !correctSet.has(id));
+    const topic = TOPIC_BY_NAME[t];
+    merged.topicStats[t] = {
+      correctIds, wrongIds,
+      lastScore: correctIds.length,
+      lastTotal: topic ? topic.questions.length : (l.lastTotal || c.lastTotal || 0),
+      // session/resume state: prefer the one that has it (whichever was saved last)
+      ...(l.sessionAnswers  || c.sessionAnswers  ? { sessionAnswers:  l.sessionAnswers  || c.sessionAnswers  } : {}),
+      ...(l.sessionRevealed || c.sessionRevealed ? { sessionRevealed: l.sessionRevealed || c.sessionRevealed } : {}),
+      ...(l.resumeIndex != null || c.resumeIndex != null ? { resumeIndex: l.resumeIndex != null ? l.resumeIndex : c.resumeIndex } : {})
+    };
   });
 
-  // wrongIds: union (a question marked wrong on any device stays in the review pool)
-  merged.wrongIds = [...new Set([...(local.wrongIds || []), ...(cloud.wrongIds || [])])];
+  // Top-level wrongIds: union, but exclude anything that became correct on any device
+  const allCorrectSet = new Set();
+  Object.values(merged.topicStats).forEach(ts => (ts.correctIds || []).forEach(id => allCorrectSet.add(id)));
+  merged.wrongIds = [...new Set([...(local.wrongIds || []), ...(cloud.wrongIds || [])])].filter(id => !allCorrectSet.has(id));
 
   return merged;
 }
@@ -330,7 +335,9 @@ async function pullFromCloud(key) {
     if (data) {
       if (!store.users) store.users = {};
       const cloudData = { topicStats: data.topicStats || {}, wrongIds: data.wrongIds || [] };
+      migrateTopicStats(cloudData); // ensure cloud data has correctIds before merge
       const localData = store.users[key] || null;
+      if (localData) migrateTopicStats(localData);
       store.users[key] = mergeUserData(localData, cloudData);
       try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch {}
       if (legacyKey) {
@@ -382,9 +389,16 @@ let store = loadStore();
 // On page load: pull from cloud, merge with local, push merged result back
 // This ensures the best progress from any device always wins
 if (store.activeUser) {
+  // Migrate local user data first so the merge compares apples to apples
+  if (store.users && store.users[store.activeUser]) {
+    migrateTopicStats(store.users[store.activeUser]);
+  }
   pullFromCloud(store.activeUser).then(() => {
+    if (store.users && store.users[store.activeUser]) {
+      migrateTopicStats(store.users[store.activeUser]);
+    }
     pushToCloud(store.activeUser);
-    render(); // re-render with merged data
+    render();
   });
 }
 
@@ -409,6 +423,48 @@ const TOPICS = (() => {
   }
   return order.map(name => ({ name, questions: map[name] }));
 })();
+// Lookup: topicName → topic object (for finding by q.t)
+const TOPIC_BY_NAME = Object.fromEntries(TOPICS.map(t => [t.name, t]));
+
+// One-time migration per user: back-fill correctIds from lastScore/wrongIds for old data.
+// If a topic was fully attempted (lastScore + wrongIds.length === lastTotal === topic size),
+// we can derive correctIds = all topic questions not in wrongIds.
+function migrateTopicStats(user) {
+  if (!user || !user.topicStats) return;
+  TOPICS.forEach(topic => {
+    const stats = user.topicStats[topic.name];
+    if (!stats || stats.correctIds) return;
+    const wrongSet = new Set(stats.wrongIds || []);
+    if (stats.lastScore != null && stats.lastTotal === topic.questions.length
+        && (stats.lastScore + wrongSet.size) === stats.lastTotal) {
+      // Fully attempted: anything not wrong was correct
+      stats.correctIds = topic.questions.filter(q => !wrongSet.has(q.i)).map(q => q.i);
+    } else {
+      stats.correctIds = []; // unknown which were correct — leave empty
+    }
+  });
+}
+
+// Update topic stats when a question is answered. q has .i (id) and .t (topic name).
+function recordQuestionResult(user, q, isCorrect) {
+  user.topicStats = user.topicStats || {};
+  const ts = user.topicStats[q.t] = user.topicStats[q.t] || { correctIds: [], wrongIds: [] };
+  ts.correctIds = ts.correctIds || [];
+  ts.wrongIds   = ts.wrongIds   || [];
+  if (isCorrect) {
+    if (!ts.correctIds.includes(q.i)) ts.correctIds = [...ts.correctIds, q.i];
+    ts.wrongIds = ts.wrongIds.filter(id => id !== q.i);
+  } else {
+    if (!ts.wrongIds.includes(q.i)) ts.wrongIds = [...ts.wrongIds, q.i];
+    ts.correctIds = ts.correctIds.filter(id => id !== q.i);
+  }
+  // Keep lastScore / lastTotal in sync as a snapshot
+  const topic = TOPIC_BY_NAME[q.t];
+  if (topic) {
+    ts.lastScore = ts.correctIds.length;
+    ts.lastTotal = topic.questions.length;
+  }
+}
 
 /* ════════════════════════════════════════════════
    UTILITIES
@@ -710,10 +766,15 @@ function renderKnowledgeHome(user) {
 
   TOPICS.forEach((topic, idx) => {
     const stats = (user.topicStats || {})[topic.name] || {};
-    const wrong = (stats.wrongIds || []).length;
-    const hasScore = stats.lastTotal > 0;
-    const allRight = hasScore && stats.lastScore === topic.questions.length && wrong === 0;
-    const inProgress = hasScore && !allRight;
+    const correctIds = stats.correctIds || [];
+    const wrongIds   = stats.wrongIds   || [];
+    const score      = correctIds.length;
+    const wrong      = wrongIds.length;
+    const attempted  = score + wrong;
+    const total      = topic.questions.length;
+    const allRight   = score === total && wrong === 0;
+    const inProgress = attempted > 0 && !allRight;
+    const hasScore   = attempted > 0;
 
     w.appendChild(el('button', {
       cls: 'topic-item' + (allRight ? ' done' : inProgress ? ' in-progress' : ''),
@@ -723,8 +784,8 @@ function renderKnowledgeHome(user) {
       div('topic-body',
         el('div', { cls: 'topic-name' }, topic.name),
         el('div', { cls: 'topic-meta' },
-          `${topic.questions.length} questions`,
-          hasScore ? span('ok', `  ✓ ${stats.lastScore}/${stats.lastTotal}`) : null,
+          `${total} questions`,
+          hasScore ? span('ok', `  ✓ ${score}/${total}`) : null,
           wrong > 0 ? span('bad', `  ✗ ${wrong} wrong`) : null,
           (!route.shuffle && stats.resumeIndex > 0 && !allRight) ? span('faint', `  · resumes Q${stats.resumeIndex + 1}`) : null
         )
@@ -993,11 +1054,11 @@ function handleOption(q, oi) {
 function savePartialQuizProgress() {
   if (!quiz || quiz.source !== 'topic' || quiz.topicIdx == null) return;
   const answered = Object.keys(quiz.revealed).length;
-  if (answered === 0) return; // nothing answered yet — don't mark topic
+  if (answered === 0) return; // nothing answered yet
   const user = currentUser();
   const tname = TOPICS[quiz.topicIdx].name;
   user.topicStats = user.topicStats || {};
-  user.topicStats[tname] = user.topicStats[tname] || {};
+  user.topicStats[tname] = user.topicStats[tname] || { correctIds: [], wrongIds: [] };
   const stats = user.topicStats[tname];
 
   // Save actual answers + revealed state so we can fully restore on resume
@@ -1010,17 +1071,9 @@ function savePartialQuizProgress() {
   });
   stats.sessionAnswers  = sessionAnswers;
   stats.sessionRevealed = sessionRevealed;
+  // correctIds/wrongIds were already updated per-question by submitAnswer
 
-  // Don't downgrade a previously-completed topic with a partial in-progress score
-  const wasCompleted = stats.lastScore != null && stats.lastTotal > 0 && stats.lastScore === stats.lastTotal;
-  if (!wasCompleted) {
-    stats.lastScore = quiz.correctCount;
-    stats.lastTotal = quiz.pool.length;
-  }
-
-  // Save resume point only when not shuffled (shuffled order can't be reproduced)
   if (!route.shuffle) {
-    // Resume at the first unanswered question in pool order
     let firstUnanswered = quiz.pool.findIndex(p => !sessionRevealed[p.i]);
     if (firstUnanswered === -1) firstUnanswered = quiz.pool.length - 1;
     stats.resumeIndex = firstUnanswered;
@@ -1039,24 +1092,15 @@ function submitAnswer(q) {
   const ok = arrEq(sel, correctArr);
   quiz.revealed[q.i] = true;
 
+  // Always update topic-level stats by q.t (works for topic, review, assessment, etc.)
+  recordQuestionResult(user, q, ok);
+  // Keep top-level user.wrongIds in sync
   if (ok) {
     quiz.correctCount++; quiz.streak++;
-    // Remove from wrong lists
     user.wrongIds = (user.wrongIds || []).filter(id => id !== q.i);
-    if (quiz.source === 'topic') {
-      const ts = user.topicStats[TOPICS[quiz.topicIdx].name];
-      if (ts) ts.wrongIds = (ts.wrongIds || []).filter(id => id !== q.i);
-    }
   } else {
     quiz.streak = 0;
     if (!(user.wrongIds || []).includes(q.i)) user.wrongIds = [...(user.wrongIds || []), q.i];
-    if (quiz.source === 'topic') {
-      const tname = TOPICS[quiz.topicIdx].name;
-      user.topicStats = user.topicStats || {};
-      user.topicStats[tname] = user.topicStats[tname] || {};
-      const w = user.topicStats[tname].wrongIds || [];
-      if (!w.includes(q.i)) user.topicStats[tname].wrongIds = [...w, q.i];
-    }
   }
   saveStore();
   go('quiz');
@@ -1073,33 +1117,26 @@ function finishQuiz() {
     const ok = attempted && arrEq(sel, correctArr);
     if (ok) {
       correct++;
+      recordQuestionResult(user, q, true);
       user.wrongIds = (user.wrongIds || []).filter(id => id !== q.i);
     } else if (attempted) {
-      // Only mark as wrong if the user actually answered (and got it wrong)
       wrong++;
+      recordQuestionResult(user, q, false);
       if (!(user.wrongIds || []).includes(q.i)) user.wrongIds = [...(user.wrongIds || []), q.i];
     } else {
-      // Skipped — leave wrongIds alone
-      skipped++;
+      skipped++; // leave existing state alone
     }
     return { q, sel, ok, correctArr, attempted };
   });
 
   if (quiz.source === 'topic' && quiz.topicIdx != null) {
     const tname = TOPICS[quiz.topicIdx].name;
-    user.topicStats = user.topicStats || {};
-    user.topicStats[tname] = user.topicStats[tname] || {};
-    const stats = user.topicStats[tname];
-    // Don't downgrade a previously-completed topic
-    const wasCompleted = stats.lastScore != null && stats.lastTotal > 0 && stats.lastScore === stats.lastTotal;
-    const isNowCompleted = correct === quiz.pool.length;
-    if (isNowCompleted || !wasCompleted) {
-      stats.lastScore = correct;
-      stats.lastTotal = quiz.pool.length;
+    const stats = (user.topicStats || {})[tname];
+    if (stats) {
+      delete stats.resumeIndex;
+      delete stats.sessionAnswers;
+      delete stats.sessionRevealed;
     }
-    delete stats.resumeIndex;
-    delete stats.sessionAnswers;
-    delete stats.sessionRevealed;
   }
   saveStore();
   quiz.results = { correct, wrong, skipped, total: quiz.pool.length, detail };
