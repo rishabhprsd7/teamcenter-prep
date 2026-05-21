@@ -251,20 +251,71 @@ function pushToCloud(name) {
 }
 
 async function pullFromCloud(name) {
+  // name is already lowercase; also try legacy mixed-case keys so old profiles migrate
+  const toTry = [name];
+  const upper = name.toUpperCase();
+  const title = name.charAt(0).toUpperCase() + name.slice(1);
+  if (upper !== name) toTry.push(upper);
+  if (title !== name && title !== upper) toTry.push(title);
+
   try {
-    const doc = await db.collection('progress').doc(name).get();
-    if (doc.exists) {
+    let data = null;
+    let legacyKey = null;
+    for (const key of toTry) {
+      const doc = await db.collection('progress').doc(key).get();
+      if (doc.exists) {
+        data = doc.data();
+        if (key !== name) legacyKey = key; // found under old casing
+        break;
+      }
+    }
+    if (data) {
       if (!store.users) store.users = {};
       store.users[name] = {
-        topicStats: doc.data().topicStats || {},
-        wrongIds:   doc.data().wrongIds   || []
+        topicStats: data.topicStats || {},
+        wrongIds:   data.wrongIds   || []
       };
       try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch {}
+      // migrate: write under lowercase key and remove old key
+      if (legacyKey) {
+        db.collection('progress').doc(name).set({
+          topicStats: data.topicStats || {},
+          wrongIds:   data.wrongIds   || [],
+          updatedAt:  Date.now()
+        }).then(() => db.collection('progress').doc(legacyKey).delete())
+          .catch(e => console.warn('Migration failed:', e));
+      }
     }
   } catch(e) { console.warn('Cloud load failed, using local data:', e); }
 }
 
 let store = loadStore();
+
+// One-time local migration: lowercase all user keys in the store
+(function migrateLocalKeys() {
+  if (!store.users) return;
+  let changed = false;
+  Object.keys(store.users).forEach(key => {
+    const lower = key.toLowerCase();
+    if (lower !== key) {
+      // merge into lowercase key (prefer whichever has more progress)
+      const existing = store.users[lower];
+      const legacy   = store.users[key];
+      if (!existing) {
+        store.users[lower] = legacy;
+      } else {
+        // keep the one with more wrongIds / topicStats entries
+        const existingScore = Object.keys(existing.topicStats || {}).length;
+        const legacyScore   = Object.keys(legacy.topicStats   || {}).length;
+        if (legacyScore > existingScore) store.users[lower] = legacy;
+      }
+      delete store.users[key];
+      changed = true;
+    }
+  });
+  if (store.activeUser) store.activeUser = store.activeUser.toLowerCase();
+  if (changed) try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch {}
+})();
 
 function getUser(name) {
   if (!store.users) store.users = {};
