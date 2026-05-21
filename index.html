@@ -294,10 +294,13 @@ function mergeUserData(local, cloud) {
     };
   });
 
-  // Top-level wrongIds: union, but exclude anything that became correct on any device
-  const allCorrectSet = new Set();
-  Object.values(merged.topicStats).forEach(ts => (ts.correctIds || []).forEach(id => allCorrectSet.add(id)));
-  merged.wrongIds = [...new Set([...(local.wrongIds || []), ...(cloud.wrongIds || [])])].filter(id => !allCorrectSet.has(id));
+  // Rebuild top-level wrongIds from the already-merged per-topic stats.
+  // Per-topic wrongIds are authoritative (correct-wins logic already applied above),
+  // so aggregating them gives a more accurate result than trying to union two
+  // potentially-stale top-level arrays.
+  const allWrong = new Set();
+  Object.values(merged.topicStats).forEach(ts => (ts.wrongIds || []).forEach(id => allWrong.add(id)));
+  merged.wrongIds = [...allWrong];
 
   return merged;
 }
@@ -492,6 +495,19 @@ if (store.activeUser) {
 /* ════════════════════════════════════════════════
    UTILITIES
    ════════════════════════════════════════════════ */
+
+// Aggregate all wrong IDs from per-topic stats — the authoritative source.
+// Falls back to top-level wrongIds only if topicStats is empty (legacy data).
+function getAllWrongIds(user) {
+  const topicWrong = new Set();
+  Object.values(user.topicStats || {}).forEach(ts => {
+    (ts.wrongIds || []).forEach(id => topicWrong.add(id));
+  });
+  if (topicWrong.size > 0) return [...topicWrong];
+  // Legacy fallback: use top-level array if no per-topic data exists yet
+  return user.wrongIds || [];
+}
+
 function shuffle(arr) {
   const a = arr.slice();
   for (let i = a.length - 1; i > 0; i--) {
@@ -766,7 +782,7 @@ function renderHome() {
 
 function renderKnowledgeHome(user) {
   const w = div(null);
-  const wrongCount = (user.wrongIds || []).length;
+  const wrongCount = getAllWrongIds(user).length;
 
   // Action row
   const ar = div('action-row');
@@ -822,7 +838,7 @@ function renderKnowledgeHome(user) {
 
 function renderAssessmentHome(user) {
   const w = div(null);
-  const wrongCount = (user.wrongIds || []).length;
+  const wrongCount = getAllWrongIds(user).length;
 
   // Assessments first
   w.appendChild(el('div', { cls: 'label section-label' }, 'Assessments'));
@@ -913,7 +929,7 @@ function startQuiz(opts) {
     });
     opts._preCorrect = preCorrect;
   } else if (opts.source === 'wrong') {
-    const ids = new Set(user.wrongIds || []);
+    const ids = new Set(getAllWrongIds(user));
     pool = shuffle(QUESTIONS.filter(q => ids.has(q.i)));
     title = 'Review wrong answers';
   } else if (opts.source === 'full') {
