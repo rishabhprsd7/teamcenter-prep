@@ -469,7 +469,7 @@ function renderWelcome() {
   form.appendChild(input);
   form.appendChild(submitBtn);
   w.appendChild(form);
-  w.appendChild(el('p', { style: 'margin-top:28px;font-size:11px;color:var(--faint);text-align:center;letter-spacing:0.02em;' }, '✦ Built on Arjav\'s data'));
+  w.appendChild(el('p', { style: 'margin-top:28px;font-size:11px;color:var(--faint);text-align:center;letter-spacing:0.02em;' }, '✦ Built on Arjav Trivedi\'s data · Created by Rishabh Prasad'));
   return w;
 }
 
@@ -502,7 +502,7 @@ function renderHome() {
   if (route.tab === 'knowledge') w.appendChild(renderKnowledgeHome(user));
   else w.appendChild(renderAssessmentHome(user));
 
-  w.appendChild(el('p', { style: 'margin-top:32px;font-size:11px;color:var(--faint);text-align:center;letter-spacing:0.02em;' }, '✦ Built on Arjav\'s data'));
+  w.appendChild(el('p', { style: 'margin-top:32px;font-size:11px;color:var(--faint);text-align:center;letter-spacing:0.02em;' }, '✦ Built on Arjav Trivedi\'s data · Created by Rishabh Prasad'));
 
   return w;
 }
