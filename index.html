@@ -240,45 +240,45 @@ function saveStore() {
   if (store.activeUser) pushToCloud(store.activeUser);
 }
 
-function pushToCloud(name) {
-  const u = (store.users || {})[name];
+function pushToCloud(key) {
+  const u = (store.users || {})[key];
   if (!u) return;
-  db.collection('progress').doc(name).set({
+  db.collection('progress').doc(key).set({
     topicStats: u.topicStats || {},
     wrongIds:   u.wrongIds   || [],
     updatedAt:  Date.now()
   }).catch(e => console.warn('Cloud save failed:', e));
 }
 
-async function pullFromCloud(name) {
-  // name is already lowercase; also try legacy mixed-case keys so old profiles migrate
-  const toTry = [name];
-  const upper = name.toUpperCase();
-  const title = name.charAt(0).toUpperCase() + name.slice(1);
-  if (upper !== name) toTry.push(upper);
-  if (title !== name && title !== upper) toTry.push(title);
+async function pullFromCloud(key) {
+  // key is "name_pin" format. Also try legacy name-only keys so old profiles migrate.
+  const namePart = key.includes('_') ? key.split('_').slice(0,-1).join('_') : key;
+  const toTry = [...new Set([
+    key,
+    namePart,
+    namePart.toUpperCase(),
+    namePart.charAt(0).toUpperCase() + namePart.slice(1)
+  ])];
 
   try {
-    let data = null;
-    let legacyKey = null;
-    for (const key of toTry) {
-      const doc = await db.collection('progress').doc(key).get();
+    let data = null, legacyKey = null;
+    for (const k of toTry) {
+      const doc = await db.collection('progress').doc(k).get();
       if (doc.exists) {
         data = doc.data();
-        if (key !== name) legacyKey = key; // found under old casing
+        if (k !== key) legacyKey = k;
         break;
       }
     }
     if (data) {
       if (!store.users) store.users = {};
-      store.users[name] = {
+      store.users[key] = {
         topicStats: data.topicStats || {},
         wrongIds:   data.wrongIds   || []
       };
       try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch {}
-      // migrate: write under lowercase key and remove old key
       if (legacyKey) {
-        db.collection('progress').doc(name).set({
+        db.collection('progress').doc(key).set({
           topicStats: data.topicStats || {},
           wrongIds:   data.wrongIds   || [],
           updatedAt:  Date.now()
@@ -287,6 +287,12 @@ async function pullFromCloud(name) {
       }
     }
   } catch(e) { console.warn('Cloud load failed, using local data:', e); }
+}
+
+// Extract display name from "name_pin" key
+function displayName(key) {
+  if (!key) return '';
+  return key.includes('_') ? key.split('_').slice(0,-1).join(' ') : key;
 }
 
 let store = loadStore();
@@ -426,7 +432,7 @@ function renderWelcome() {
   const w = div('auth-wrap');
   w.appendChild(div(null,
     el('div', { cls: 'auth-logo' }, 'Teamcenter ', el('span', { cls: 'gold italic' }, 'Prep')),
-    el('p', { cls: 'auth-sub' }, '334 questions across 60 topics. Enter your name — progress saves automatically.')
+    el('p', { cls: 'auth-sub' }, '334 questions across 60 topics. Enter your name + a 4-digit PIN — your PIN keeps your progress private.')
   ));
 
   const existingUsers = Object.keys(store.users || {});
@@ -435,38 +441,54 @@ function renderWelcome() {
   if (existingUsers.length > 0) {
     form.appendChild(el('div', { cls: 'label', style: 'margin-bottom:8px' }, 'Continue as'));
     const userBtns = el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;' });
-    existingUsers.forEach(name => {
-      const wrong = ((store.users[name] || {}).wrongIds || []).length;
+    existingUsers.forEach(key => {
+      const wrong = ((store.users[key] || {}).wrongIds || []).length;
       userBtns.appendChild(el('button', {
         cls: 'btn btn-secondary btn-sm',
         style: 'flex:0 0 auto;',
-        onClick: async () => { store.activeUser = name; await pullFromCloud(name); saveStore(); go('home'); }
-      }, name + (wrong > 0 ? ` · ${wrong} to review` : '')));
+        onClick: async () => { store.activeUser = key; await pullFromCloud(key); saveStore(); go('home'); }
+      }, displayName(key) + (wrong > 0 ? ` · ${wrong} to review` : '')));
     });
     form.appendChild(userBtns);
-    form.appendChild(el('div', { cls: 'label', style: 'margin-bottom:8px' }, 'Or enter a new name'));
+    form.appendChild(el('div', { cls: 'label', style: 'margin-bottom:8px' }, 'Or sign in with a different name'));
   } else {
     form.appendChild(el('div', { cls: 'label', style: 'margin-bottom:8px' }, 'Your name'));
   }
 
-  const input = el('input', { type: 'text', placeholder: 'e.g. Alex', autocomplete: 'off', autocorrect: 'off', autocapitalize: 'words' });
-  const submitBtn = el('button', { cls: 'btn btn-primary' }, 'Start studying →');
+  const nameInput = el('input', { type: 'text', placeholder: 'e.g. Alex', autocomplete: 'off', autocorrect: 'off', autocapitalize: 'words' });
+  const pinWrap = el('div', { style: 'margin-top:10px;' });
+  pinWrap.appendChild(el('div', { cls: 'label', style: 'margin-bottom:6px' }, '4-digit PIN'));
+  const pinInput = el('input', { type: 'text', inputmode: 'numeric', maxlength: '4', placeholder: '····', autocomplete: 'off',
+    style: 'letter-spacing:0.25em;font-size:20px;text-align:center;' });
+  pinWrap.appendChild(pinInput);
+  const errMsg = el('div', { style: 'color:var(--red);font-size:12px;margin-top:6px;display:none;' });
+  const submitBtn = el('button', { cls: 'btn btn-primary', style: 'margin-top:14px;' }, 'Start studying →');
 
-  async function startSession(name) {
-    if (!name) { input.focus(); return; }
-    name = name.toLowerCase();
+  async function startSession() {
+    const name = nameInput.value.trim().toLowerCase();
+    const pin  = pinInput.value.trim();
+    if (!name) { errMsg.textContent = 'Please enter your name.'; errMsg.style.display = ''; nameInput.focus(); return; }
+    if (!/^\d{4}$/.test(pin)) { errMsg.textContent = 'PIN must be exactly 4 digits.'; errMsg.style.display = ''; pinInput.focus(); return; }
+    errMsg.style.display = 'none';
+    const key = `${name}_${pin}`;
     submitBtn.disabled = true;
     submitBtn.textContent = 'Loading…';
-    store.activeUser = name;
-    await pullFromCloud(name);
+    store.activeUser = key;
+    await pullFromCloud(key);
     saveStore();
     submitBtn.disabled = false;
     go('home');
   }
 
-  submitBtn.addEventListener('click', () => startSession(input.value.trim()));
-  input.addEventListener('keydown', e => { if (e.key === 'Enter') startSession(input.value.trim()); });
-  form.appendChild(input);
+  submitBtn.addEventListener('click', startSession);
+  pinInput.addEventListener('keydown', e => { if (e.key === 'Enter') startSession(); });
+  nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') pinInput.focus(); });
+  // auto-advance to PIN when name field is filled
+  pinInput.addEventListener('input', () => { pinInput.value = pinInput.value.replace(/[^0-9]/g, ''); });
+
+  form.appendChild(nameInput);
+  form.appendChild(pinWrap);
+  form.appendChild(errMsg);
   form.appendChild(submitBtn);
   w.appendChild(form);
   w.appendChild(el('p', { style: 'margin-top:28px;font-size:11px;color:var(--faint);text-align:center;letter-spacing:0.02em;' }, '✦ Built on Arjav Trivedi\'s data · Created by Rishabh Prasad'));
@@ -484,7 +506,7 @@ function renderHome() {
   w.appendChild(div('user-bar',
     div(null,
       el('div', { cls: 'label' }, 'Studying as'),
-      el('div', { cls: 'user-name-display' }, store.activeUser)
+      el('div', { cls: 'user-name-display' }, displayName(store.activeUser))
     ),
     el('button', {
       cls: 'switch-user-btn',
