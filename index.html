@@ -328,7 +328,7 @@ function pushToCloud(key) {
       wrongIds:   merged.wrongIds,
       updatedAt:  Date.now()
     });
-  }).catch(e => console.warn('Cloud save failed:', e));
+  }).catch(e => console.error('[pushToCloud] transaction failed:', e));
 }
 
 async function pullFromCloud(key) {
@@ -341,10 +341,12 @@ async function pullFromCloud(key) {
     namePart.charAt(0).toUpperCase() + namePart.slice(1)
   ])];
 
+  console.log('[pullFromCloud] trying keys:', toTry);
   try {
     let data = null, legacyKey = null;
     for (const k of toTry) {
       const doc = await db.collection('progress').doc(k).get();
+      console.log('[pullFromCloud] key=' + k + ' exists=' + doc.exists);
       if (doc.exists) {
         data = doc.data();
         if (k !== key) legacyKey = k;
@@ -352,12 +354,14 @@ async function pullFromCloud(key) {
       }
     }
     if (data) {
+      console.log('[pullFromCloud] got cloud data:', { topics: Object.keys(data.topicStats || {}).length, wrongIds: (data.wrongIds || []).length });
       if (!store.users) store.users = {};
       const cloudData = { topicStats: data.topicStats || {}, wrongIds: data.wrongIds || [] };
       migrateTopicStats(cloudData); // ensure cloud data has correctIds before merge
       const localData = store.users[key] || null;
       if (localData) migrateTopicStats(localData);
       store.users[key] = mergeUserData(localData, cloudData);
+      console.log('[pullFromCloud] merged result topics:', Object.keys(store.users[key].topicStats || {}).length);
       try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch {}
       if (legacyKey) {
         db.collection('progress').doc(key).set({
@@ -368,7 +372,7 @@ async function pullFromCloud(key) {
           .catch(e => console.warn('Migration failed:', e));
       }
     }
-  } catch(e) { console.warn('Cloud load failed, using local data:', e); }
+  } catch(e) { console.error('[pullFromCloud] failed:', e); }
 }
 
 // Extract display name from "name_pin" key
