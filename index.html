@@ -194,6 +194,20 @@ input[type=text]::placeholder { color: var(--faint); }
 .auth-toggle button { background: none; border: none; color: var(--gold); font-size: 14px; font-weight: 600; cursor: pointer; padding: 0; text-decoration: underline; }
 .auth-loading { text-align: center; padding: 80px 20px; color: var(--dim); font-size: 15px; }
 
+/* ── FEEDBACK BUTTON ── */
+.fab { position: fixed; bottom: 20px; right: 20px; z-index: 999; background: var(--bg1); border: 1px solid var(--border2); border-radius: 20px; padding: 8px 14px; font-size: 12px; font-weight: 600; color: var(--dim); cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.10); transition: box-shadow 0.15s; }
+.fab:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.15); color: var(--text); }
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.35); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.modal-box { background: var(--bg1); border: 1px solid var(--border); border-radius: var(--r); padding: 24px; width: 100%; max-width: 420px; box-shadow: 0 8px 32px rgba(0,0,0,0.18); }
+.modal-title { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+.modal-sub { font-size: 13px; color: var(--dim); margin-bottom: 18px; }
+.modal-type { display: flex; gap: 8px; margin-bottom: 14px; }
+.modal-type button { flex: 1; padding: 8px; border-radius: var(--rs); border: 1.5px solid var(--border2); background: var(--bg2); font-size: 13px; font-weight: 600; color: var(--dim); cursor: pointer; }
+.modal-type button.active { border-color: var(--gold); background: var(--gold-bg); color: var(--gold); }
+.modal-box textarea { width: 100%; box-sizing: border-box; min-height: 90px; resize: vertical; padding: 10px 12px; border: 1.5px solid var(--border2); border-radius: var(--rs); font-family: var(--sans); font-size: 14px; background: var(--bg2); color: var(--text); margin-bottom: 14px; }
+.modal-box textarea:focus { outline: none; border-color: var(--gold); }
+.modal-footer { display: flex; gap: 8px; justify-content: flex-end; }
+
 /* ── ANIMATIONS ── */
 @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 .page { animation: fadeUp 0.22s ease-out; }
@@ -423,6 +437,62 @@ function render() {
 
   wrap.appendChild(inner);
   root.appendChild(wrap);
+
+  // Feedback button — always visible
+  const fab = el('button', { cls: 'fab', onClick: openFeedback }, '💬 Feedback');
+  root.appendChild(fab);
+}
+
+function openFeedback() {
+  let type = 'bug';
+  const overlay = el('div', { cls: 'modal-overlay' });
+
+  const box = div('modal-box',
+    el('div', { cls: 'modal-title' }, 'Report a bug or suggestion'),
+    el('div', { cls: 'modal-sub' }, 'Your feedback goes directly to the creator.')
+  );
+
+  // Type toggle
+  const typeRow = div('modal-type');
+  const bugBtn  = el('button', { cls: 'active', onClick: () => { type = 'bug';         bugBtn.classList.add('active');  ideaBtn.classList.remove('active'); } }, '🐛 Bug');
+  const ideaBtn = el('button', { cls: '',       onClick: () => { type = 'improvement'; ideaBtn.classList.add('active'); bugBtn.classList.remove('active');  } }, '💡 Improvement');
+  typeRow.appendChild(bugBtn); typeRow.appendChild(ideaBtn);
+  box.appendChild(typeRow);
+
+  const ta = el('textarea', { placeholder: 'Describe the issue or idea…' });
+  box.appendChild(ta);
+
+  const status = el('div', { style: 'font-size:12px;color:var(--dim);margin-bottom:10px;display:none;' });
+  box.appendChild(status);
+
+  const footer = div('modal-footer',
+    el('button', { cls: 'btn btn-secondary', style: 'flex:0 0 auto;', onClick: () => overlay.remove() }, 'Cancel'),
+    el('button', { cls: 'btn btn-primary',   style: 'flex:0 0 auto;', onClick: async () => {
+      const msg = ta.value.trim();
+      if (!msg) { ta.focus(); return; }
+      status.textContent = 'Sending…'; status.style.display = '';
+      try {
+        await db.collection('feedback').add({
+          type, message: msg,
+          user: store.activeUser || 'anonymous',
+          createdAt: Date.now()
+        });
+        status.textContent = '✓ Sent — thank you!';
+        ta.value = '';
+        setTimeout(() => overlay.remove(), 1200);
+      } catch(e) {
+        status.textContent = 'Failed to send. Please try again.';
+        console.warn('Feedback error:', e);
+      }
+    }}, 'Submit')
+  );
+  box.appendChild(footer);
+  overlay.appendChild(box);
+
+  // Close on backdrop click
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.getElementById('root').appendChild(overlay);
+  setTimeout(() => ta.focus(), 50);
 }
 
 /* ════════════════════════════════════════════════
