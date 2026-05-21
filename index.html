@@ -397,6 +397,7 @@ function renderWelcome() {
 
   async function startSession(name) {
     if (!name) { input.focus(); return; }
+    name = name.toLowerCase();
     submitBtn.disabled = true;
     submitBtn.textContent = 'Loading…';
     store.activeUser = name;
@@ -411,6 +412,7 @@ function renderWelcome() {
   form.appendChild(input);
   form.appendChild(submitBtn);
   w.appendChild(form);
+  w.appendChild(el('p', { style: 'margin-top:28px;font-size:11px;color:var(--faint);text-align:center;letter-spacing:0.02em;' }, '✦ Built on Arjav\'s data'));
   return w;
 }
 
@@ -442,6 +444,8 @@ function renderHome() {
 
   if (route.tab === 'knowledge') w.appendChild(renderKnowledgeHome(user));
   else w.appendChild(renderAssessmentHome(user));
+
+  w.appendChild(el('p', { style: 'margin-top:32px;font-size:11px;color:var(--faint);text-align:center;letter-spacing:0.02em;' }, '✦ Built on Arjav\'s data'));
 
   return w;
 }
