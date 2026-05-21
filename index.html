@@ -302,13 +302,32 @@ function mergeUserData(local, cloud) {
   return merged;
 }
 
+// Push to cloud using a TRANSACTION so we never overwrite another device's data.
+// The transaction reads current cloud state, merges with local, then writes atomically.
 function pushToCloud(key) {
   const u = (store.users || {})[key];
   if (!u) return;
-  db.collection('progress').doc(key).set({
-    topicStats: u.topicStats || {},
-    wrongIds:   u.wrongIds   || [],
-    updatedAt:  Date.now()
+  const docRef = db.collection('progress').doc(key);
+  db.runTransaction(async (transaction) => {
+    const doc = await transaction.get(docRef);
+    let cloudData = doc.exists
+      ? { topicStats: doc.data().topicStats || {}, wrongIds: doc.data().wrongIds || [] }
+      : null;
+    if (cloudData) migrateTopicStats(cloudData);
+    const localData = { topicStats: u.topicStats || {}, wrongIds: u.wrongIds || [] };
+    migrateTopicStats(localData);
+    const merged = mergeUserData(localData, cloudData);
+    // Reflect the merged state back into local store so this device sees the union too
+    if (store.users && store.users[key]) {
+      store.users[key].topicStats = merged.topicStats;
+      store.users[key].wrongIds   = merged.wrongIds;
+      try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch {}
+    }
+    transaction.set(docRef, {
+      topicStats: merged.topicStats,
+      wrongIds:   merged.wrongIds,
+      updatedAt:  Date.now()
+    });
   }).catch(e => console.warn('Cloud save failed:', e));
 }
 
