@@ -809,9 +809,21 @@ function startQuiz(opts) {
     title = t.name;
     // Resume from where the user left off (only works in non-shuffled mode)
     const stats = (user.topicStats || {})[t.name] || {};
-    opts._resumeIndex  = (!route.shuffle && stats.resumeIndex > 0 && stats.resumeIndex < pool.length)
+    opts._resumeIndex   = (!route.shuffle && stats.resumeIndex > 0 && stats.resumeIndex < pool.length)
       ? stats.resumeIndex : 0;
-    opts._preResults = (!route.shuffle && stats.sessionResults) ? stats.sessionResults : {};
+    opts._preAnswers  = (!route.shuffle && stats.sessionAnswers)  ? stats.sessionAnswers  : {};
+    opts._preRevealed = (!route.shuffle && stats.sessionRevealed) ? stats.sessionRevealed : {};
+    // Recalculate correct count from restored answers
+    let preCorrect = 0;
+    Object.keys(opts._preRevealed).forEach(qiStr => {
+      const qi = parseInt(qiStr);
+      const pq = pool.find(p => p.i === qi);
+      if (!pq) return;
+      const sel = opts._preAnswers[qi] || [];
+      const ca  = Array.isArray(pq.a) ? pq.a : [pq.a];
+      if (arrEq(sel, ca)) preCorrect++;
+    });
+    opts._preCorrect = preCorrect;
   } else if (opts.source === 'wrong') {
     const ids = new Set(user.wrongIds || []);
     pool = shuffle(QUESTIONS.filter(q => ids.has(q.i)));
@@ -836,9 +848,9 @@ function startQuiz(opts) {
     mode: opts.mode, source: opts.source, topicIdx: opts.topicIdx,
     mockSet: opts.mockSet || null,
     title, pool, index: opts._resumeIndex || 0,
-    answers: {}, revealed: {},
-    preResults: opts._preResults || {}, // correct/wrong from previous session
-    streak: 0, correctCount: opts._resumeIndex || 0,
+    answers:  { ...(opts._preAnswers  || {}) }, // restore previous answers
+    revealed: { ...(opts._preRevealed || {}) }, // restore previous revealed state
+    streak: 0, correctCount: opts._preCorrect || 0,
     timeLimit, startTime: timeLimit ? Date.now() : null,
   };
   go('quiz');
@@ -885,17 +897,8 @@ function renderQuiz() {
     const isRevealed = !!quiz.revealed[pq.i];
     const sel        = quiz.answers[pq.i] || [];
     const correctArr = Array.isArray(pq.a) ? pq.a : [pq.a];
-    // Current session result takes priority; fall back to stored result from previous session
-    let isCorrect, isWrong;
-    if (isRevealed) {
-      isCorrect = arrEq(sel, correctArr);
-      isWrong   = !isCorrect;
-    } else if (pq.i in (quiz.preResults || {})) {
-      isCorrect = quiz.preResults[pq.i] === true;
-      isWrong   = quiz.preResults[pq.i] === false;
-    } else {
-      isCorrect = false; isWrong = false;
-    }
+    const isCorrect = isRevealed && arrEq(sel, correctArr);
+    const isWrong   = isRevealed && !arrEq(sel, correctArr);
     const cls = isCurrent ? 'qj-current' : isCorrect ? 'qj-correct' : isWrong ? 'qj-wrong' : '';
     jumpBar.appendChild(el('button', { cls, onClick: () => { quiz.index = i; go('quiz'); } },
       el('span', null, String(i + 1)),
@@ -996,23 +999,23 @@ function savePartialQuizProgress() {
   // Always save current progress — keeps yellow status accurate
   user.topicStats[tname].lastScore = quiz.correctCount;
   user.topicStats[tname].lastTotal = quiz.pool.length;
-  // Save per-question correct/wrong results so jump bar shows colors on resume
-  const sessionResults = user.topicStats[tname].sessionResults || {};
+  // Save actual answers + revealed state so we can fully restore on resume
+  const sessionAnswers  = { ...(user.topicStats[tname].sessionAnswers  || {}) };
+  const sessionRevealed = { ...(user.topicStats[tname].sessionRevealed || {}) };
   Object.keys(quiz.revealed).forEach(qiStr => {
     const qi = parseInt(qiStr);
-    const poolQ = quiz.pool.find(p => p.i === qi);
-    if (!poolQ) return;
-    const sel = quiz.answers[qi] || [];
-    const correctArr = Array.isArray(poolQ.a) ? poolQ.a : [poolQ.a];
-    sessionResults[qi] = arrEq(sel, correctArr);
+    sessionAnswers[qi]  = quiz.answers[qi] || [];
+    sessionRevealed[qi] = true;
   });
-  user.topicStats[tname].sessionResults = sessionResults;
+  user.topicStats[tname].sessionAnswers  = sessionAnswers;
+  user.topicStats[tname].sessionRevealed = sessionRevealed;
   // Save resume point only when not shuffled (shuffled order can't be reproduced)
   if (!route.shuffle) {
-    user.topicStats[tname].resumeIndex = Object.keys(quiz.revealed).length;
+    user.topicStats[tname].resumeIndex = Object.keys(sessionRevealed).length;
   } else {
     delete user.topicStats[tname].resumeIndex;
-    delete user.topicStats[tname].sessionResults;
+    delete user.topicStats[tname].sessionAnswers;
+    delete user.topicStats[tname].sessionRevealed;
   }
   saveStore();
 }
@@ -1070,8 +1073,9 @@ function finishQuiz() {
     user.topicStats[tname] = user.topicStats[tname] || {};
     user.topicStats[tname].lastScore = correct;
     user.topicStats[tname].lastTotal = quiz.pool.length;
-    delete user.topicStats[tname].resumeIndex;    // topic finished — next open starts fresh
-    delete user.topicStats[tname].sessionResults; // clear stored per-question results
+    delete user.topicStats[tname].resumeIndex;
+    delete user.topicStats[tname].sessionAnswers;
+    delete user.topicStats[tname].sessionRevealed;
   }
   saveStore();
   quiz.results = { correct, total: quiz.pool.length, detail };
