@@ -263,7 +263,8 @@ function saveStore() {
   if (store.activeUser) pushToCloud(store.activeUser);
 }
 
-// Merge two user data objects — always keep the better progress per topic
+// Merge two user data objects — keep the better progress per topic
+// Priority: a completed topic (lastScore === lastTotal) always beats partial
 function mergeUserData(local, cloud) {
   if (!local && !cloud) return { topicStats: {}, wrongIds: [] };
   if (!local) return cloud;
@@ -271,25 +272,26 @@ function mergeUserData(local, cloud) {
 
   const merged = { topicStats: {}, wrongIds: [] };
 
-  // Merge topicStats: per topic, keep whichever has the higher lastScore
+  // Merge topicStats per topic
   const allTopics = new Set([
-    ...Object.keys(local.topicStats  || {}),
-    ...Object.keys(cloud.topicStats  || {})
+    ...Object.keys(local.topicStats || {}),
+    ...Object.keys(cloud.topicStats || {})
   ]);
   allTopics.forEach(t => {
-    const l = (local.topicStats  || {})[t];
-    const c = (cloud.topicStats  || {})[t];
+    const l = (local.topicStats || {})[t];
+    const c = (cloud.topicStats || {})[t];
     if (!l) { merged.topicStats[t] = c; return; }
     if (!c) { merged.topicStats[t] = l; return; }
-    // Keep higher lastScore; on tie keep cloud (more likely to be newest device)
-    merged.topicStats[t] = (l.lastScore || 0) > (c.lastScore || 0) ? l : c;
+    const lDone = l.lastScore != null && l.lastTotal > 0 && l.lastScore === l.lastTotal;
+    const cDone = c.lastScore != null && c.lastTotal > 0 && c.lastScore === c.lastTotal;
+    // A completed copy always wins over a partial one
+    if (lDone && !cDone) { merged.topicStats[t] = l; return; }
+    if (cDone && !lDone) { merged.topicStats[t] = c; return; }
+    // Otherwise keep whichever has the higher lastScore
+    merged.topicStats[t] = (l.lastScore || 0) >= (c.lastScore || 0) ? l : c;
   });
 
-  // wrongIds: start from the union, but remove any id that scored correct in either copy
-  const localCorrect  = new Set();
-  const cloudCorrect  = new Set();
-  Object.values(local.topicStats || {}).forEach(ts => (ts.wrongIds || []).forEach(() => {}));
-  // Simple union — answers marked wrong on either device stay wrong
+  // wrongIds: union (a question marked wrong on any device stays in the review pool)
   merged.wrongIds = [...new Set([...(local.wrongIds || []), ...(cloud.wrongIds || [])])];
 
   return merged;
@@ -996,26 +998,36 @@ function savePartialQuizProgress() {
   const tname = TOPICS[quiz.topicIdx].name;
   user.topicStats = user.topicStats || {};
   user.topicStats[tname] = user.topicStats[tname] || {};
-  // Always save current progress — keeps yellow status accurate
-  user.topicStats[tname].lastScore = quiz.correctCount;
-  user.topicStats[tname].lastTotal = quiz.pool.length;
+  const stats = user.topicStats[tname];
+
   // Save actual answers + revealed state so we can fully restore on resume
-  const sessionAnswers  = { ...(user.topicStats[tname].sessionAnswers  || {}) };
-  const sessionRevealed = { ...(user.topicStats[tname].sessionRevealed || {}) };
+  const sessionAnswers  = { ...(stats.sessionAnswers  || {}) };
+  const sessionRevealed = { ...(stats.sessionRevealed || {}) };
   Object.keys(quiz.revealed).forEach(qiStr => {
     const qi = parseInt(qiStr);
     sessionAnswers[qi]  = quiz.answers[qi] || [];
     sessionRevealed[qi] = true;
   });
-  user.topicStats[tname].sessionAnswers  = sessionAnswers;
-  user.topicStats[tname].sessionRevealed = sessionRevealed;
+  stats.sessionAnswers  = sessionAnswers;
+  stats.sessionRevealed = sessionRevealed;
+
+  // Don't downgrade a previously-completed topic with a partial in-progress score
+  const wasCompleted = stats.lastScore != null && stats.lastTotal > 0 && stats.lastScore === stats.lastTotal;
+  if (!wasCompleted) {
+    stats.lastScore = quiz.correctCount;
+    stats.lastTotal = quiz.pool.length;
+  }
+
   // Save resume point only when not shuffled (shuffled order can't be reproduced)
   if (!route.shuffle) {
-    user.topicStats[tname].resumeIndex = Object.keys(sessionRevealed).length;
+    // Resume at the first unanswered question in pool order
+    let firstUnanswered = quiz.pool.findIndex(p => !sessionRevealed[p.i]);
+    if (firstUnanswered === -1) firstUnanswered = quiz.pool.length - 1;
+    stats.resumeIndex = firstUnanswered;
   } else {
-    delete user.topicStats[tname].resumeIndex;
-    delete user.topicStats[tname].sessionAnswers;
-    delete user.topicStats[tname].sessionRevealed;
+    delete stats.resumeIndex;
+    delete stats.sessionAnswers;
+    delete stats.sessionRevealed;
   }
   saveStore();
 }
@@ -1053,32 +1065,44 @@ function submitAnswer(q) {
 function finishQuiz() {
   clearQuizTimer();
   const user = currentUser();
-  let correct = 0;
+  let correct = 0, wrong = 0, skipped = 0;
   const detail = quiz.pool.map(q => {
     const sel = quiz.answers[q.i] || [];
     const correctArr = Array.isArray(q.a) ? q.a : [q.a];
-    const ok = arrEq(sel, correctArr);
+    const attempted = sel.length > 0;
+    const ok = attempted && arrEq(sel, correctArr);
     if (ok) {
       correct++;
       user.wrongIds = (user.wrongIds || []).filter(id => id !== q.i);
-    } else {
+    } else if (attempted) {
+      // Only mark as wrong if the user actually answered (and got it wrong)
+      wrong++;
       if (!(user.wrongIds || []).includes(q.i)) user.wrongIds = [...(user.wrongIds || []), q.i];
+    } else {
+      // Skipped — leave wrongIds alone
+      skipped++;
     }
-    return { q, sel, ok, correctArr };
+    return { q, sel, ok, correctArr, attempted };
   });
 
   if (quiz.source === 'topic' && quiz.topicIdx != null) {
     const tname = TOPICS[quiz.topicIdx].name;
     user.topicStats = user.topicStats || {};
     user.topicStats[tname] = user.topicStats[tname] || {};
-    user.topicStats[tname].lastScore = correct;
-    user.topicStats[tname].lastTotal = quiz.pool.length;
-    delete user.topicStats[tname].resumeIndex;
-    delete user.topicStats[tname].sessionAnswers;
-    delete user.topicStats[tname].sessionRevealed;
+    const stats = user.topicStats[tname];
+    // Don't downgrade a previously-completed topic
+    const wasCompleted = stats.lastScore != null && stats.lastTotal > 0 && stats.lastScore === stats.lastTotal;
+    const isNowCompleted = correct === quiz.pool.length;
+    if (isNowCompleted || !wasCompleted) {
+      stats.lastScore = correct;
+      stats.lastTotal = quiz.pool.length;
+    }
+    delete stats.resumeIndex;
+    delete stats.sessionAnswers;
+    delete stats.sessionRevealed;
   }
   saveStore();
-  quiz.results = { correct, total: quiz.pool.length, detail };
+  quiz.results = { correct, wrong, skipped, total: quiz.pool.length, detail };
   go('results');
 }
 
@@ -1087,9 +1111,13 @@ function finishQuiz() {
    ════════════════════════════════════════════════ */
 function renderResults() {
   const r = quiz.results;
+  const wrongCount   = r.wrong   != null ? r.wrong   : r.detail.filter(d => d.attempted && !d.ok).length;
+  const skippedCount = r.skipped != null ? r.skipped : r.detail.filter(d => !d.attempted).length;
   const pct = Math.round((r.correct / r.total) * 100);
   const passed = pct >= 70;
-  const incorrect = r.detail.filter(d => !d.ok);
+  const missed  = r.detail.filter(d => d.attempted && !d.ok);
+  const skipped = r.detail.filter(d => !d.attempted);
+  const reviewable = [...missed, ...skipped];
   const w = div(null);
 
   w.appendChild(div('quiz-header',
@@ -1100,26 +1128,32 @@ function renderResults() {
   w.appendChild(div('results-hero',
     el('div', { cls: 'label', style: 'margin-bottom:8px' }, quiz.title),
     el('div', { cls: 'big-score' }, String(r.correct), el('span', { cls: 'denom' }, ` / ${r.total}`)),
-    el('div', { cls: 'big-pct ' + (passed ? 'pass' : 'fail') }, `${pct}%  ${passed ? '✓ Pass' : '✗ Keep studying'}`)
+    el('div', { cls: 'big-pct ' + (passed ? 'pass' : 'fail') }, `${pct}%  ${passed ? '✓ Pass' : '✗ Keep studying'}`),
+    el('div', { style: 'margin-top:10px;font-size:13px;color:var(--dim);' },
+      el('span', { style: 'color:var(--green);' }, `✓ ${r.correct} correct`),
+      '  ·  ',
+      el('span', { style: 'color:var(--red);' }, `✗ ${wrongCount} wrong`),
+      skippedCount > 0 ? el('span', null, '  ·  ', el('span', { style: 'color:var(--faint);' }, `○ ${skippedCount} skipped`)) : null
+    )
   ));
 
   const ar = div('action-row');
   ar.appendChild(el('button', { cls: 'btn btn-secondary', onClick: () => { quiz = null; go('home'); } }, '↩ Home'));
-  if (incorrect.length > 0) {
+  if (reviewable.length > 0) {
     ar.appendChild(el('button', {
       cls: 'btn btn-primary',
       onClick: () => {
         quiz = { mode: 'knowledge', source: 'review', title: 'Review missed',
-          pool: shuffle(incorrect.map(d => d.q)), index: 0, answers: {}, revealed: {}, streak: 0, correctCount: 0 };
+          pool: shuffle(reviewable.map(d => d.q)), index: 0, answers: {}, revealed: {}, streak: 0, correctCount: 0 };
         go('quiz');
       }
-    }, `✎ Review ${incorrect.length} missed`));
+    }, `✎ Review ${reviewable.length}`));
   }
   w.appendChild(ar);
 
-  if (incorrect.length > 0) {
-    w.appendChild(el('div', { cls: 'label section-label' }, `Missed (${incorrect.length})`));
-    incorrect.forEach(d => {
+  if (missed.length > 0) {
+    w.appendChild(el('div', { cls: 'label section-label' }, `Wrong (${missed.length})`));
+    missed.forEach(d => {
       const correctText = d.correctArr.map(i => letter(i)).join(', ');
       const userText = d.sel.length ? d.sel.map(i => letter(i)).join(', ') : '—';
       w.appendChild(div('result-row bad',
@@ -1130,7 +1164,22 @@ function renderResults() {
         )
       ));
     });
-  } else {
+  }
+
+  if (skipped.length > 0) {
+    w.appendChild(el('div', { cls: 'label section-label' }, `Skipped (${skipped.length})`));
+    skipped.forEach(d => {
+      const correctText = d.correctArr.map(i => letter(i)).join(', ');
+      w.appendChild(div('result-row',
+        el('div', { cls: 'result-q' }, d.q.q),
+        el('div', { cls: 'result-ans' },
+          'Answer: ', el('span', { cls: 'correct-ans' }, correctText + ' — ' + d.q.o[d.correctArr[0]].slice(0, 70))
+        )
+      ));
+    });
+  }
+
+  if (missed.length === 0 && skipped.length === 0) {
     w.appendChild(div('empty', el('h3', null, '✓ Perfect score'), el('p', null, 'You got every single one right.')));
   }
 
