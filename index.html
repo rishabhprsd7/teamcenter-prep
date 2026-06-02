@@ -523,8 +523,18 @@ function recordQuestionResult(user, q, isCorrect) {
 const ANSWER_FIX_IDS = [13,15,16,25,28,30,36,47,49,51,52,56,58,74,76,87,96,98,102,108,116,118,127,129,132,134,137,156,165,170,180,182,183,185,194,198,200,203,205,210,213,215,217,218,227,228,230,240,241,248,250,253,261,265,275,283,287,288,290,292,294,301,302,305,312,317,319,320,321,323,324];
 
 function ensureAnswerFix(user) {
-  if (!user || user.answerFixV1) return false;
-  let changed = false;
+  if (!user) return false;
+  // Count how many of the corrected questions currently sit in this user's "wrong" pile.
+  const correctedInWrong = () => ANSWER_FIX_IDS.filter(qid => {
+    const q = QUESTION_BY_ID[qid]; if (!q) return false;
+    const st = (user.topicStats || {})[q.t]; if (!st) return false;
+    return (st.wrongIds || []).includes(qid);
+  });
+  if (user.answerFixV1) {
+    console.log('[answerFix] already applied for this account — ' + correctedInWrong().length + ' corrected question(s) now in Review-wrong');
+    return false;
+  }
+  const downgraded = [];
   user.wrongIds = user.wrongIds || [];
   ANSWER_FIX_IDS.forEach(qid => {
     const q = QUESTION_BY_ID[qid];
@@ -542,11 +552,12 @@ function ensureAnswerFix(user) {
       stats.lastScore = stats.correctIds.length;
       if (topic) stats.lastTotal = topic.questions.length;
       stats.updatedAt = Date.now();
-      changed = true;
+      downgraded.push(qid);
     }
   });
   user.answerFixV1 = true; // mark done even if nothing changed, so it won't re-run
-  return changed;
+  console.log('[answerFix] applied — moved ' + downgraded.length + ' previously-"correct" answer(s) to wrong:', downgraded);
+  return downgraded.length > 0;
 }
 
 // On page load: pull from cloud, merge with local, push merged result back
