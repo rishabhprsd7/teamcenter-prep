@@ -670,9 +670,15 @@ let route = { page: 'home', tab: 'knowledge', shuffle: false };
 let quiz = null;
 
 function go(page, extra = {}) {
+  // Only jump to the top when actually changing pages (e.g. home → quiz,
+  // quiz → results). When re-rendering the SAME page — selecting an option,
+  // Next/Prev, jumping via the number bar — keep the current scroll position
+  // so answering a question doesn't yank you back up past the jump bar.
+  const samePage = route.page === page;
+  const prevScroll = window.scrollY;
   route = { ...route, page, ...extra };
   render();
-  window.scrollTo(0, 0);
+  window.scrollTo(0, samePage ? prevScroll : 0);
 }
 
 /* ════════════════════════════════════════════════
